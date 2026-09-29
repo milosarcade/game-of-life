@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Conway's Game of Life</title>
+<meta name="description" content="Draw cells, press play and watch Conway's Game of Life unfold. Includes tutorials.">
+<style>
+  /* base rules the Claude artifact viewer normally supplies */
+  :root{color-scheme:light}
+  img{max-width:100%}
+
+  :root {
+    --bg: #0e1116;
+    --panel: #171b22;
+    --border: #2a313c;
+    --text: #d7dde5;
+    --muted: #7d8794;
+    --accent: #5ac8fa;
+    --accent-dim: #2a4c5c;
+    /* tutorial semantics, kept distinct from the accent */
+    --todo: #f0b429;    /* cells you still have to place */
+    --ok: #4ec9a5;      /* step satisfied */
+    --stray: #e2686b;   /* cells that don't belong */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  #toolbar {
+    display: flex; align-items: center; gap: 14px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+    flex: 0 0 auto;
+  }
+  .group { display: flex; align-items: center; gap: 6px; }
+  .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+
+  button, select {
+    font: inherit;
+    color: var(--text);
+    background: #202631;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  button:hover, select:hover { background: #29313e; border-color: #3a434f; }
+  button:active { background: #333d4c; }
+  button.primary { background: var(--accent-dim); border-color: #3b6d84; color: #cfefff; min-width: 74px; }
+  button.primary:hover { background: #345c70; }
+  button.toggle.on { background: var(--accent-dim); border-color: #3b6d84; color: #cfefff; }
+  button.toggle.on:hover { background: #345c70; }
+  select { padding: 5px 6px; }
+
+  label.ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+  label.ctl .val { color: var(--text); font-variant-numeric: tabular-nums; min-width: 44px; }
+  input[type=range] {
+    width: 110px; accent-color: var(--accent);
+    background: transparent; cursor: pointer;
+  }
+
+  /* Floats over the canvas rather than sitting in the toolbar, which keeps the
+     toolbar on one row once the tutorial and draw-mode controls are added. */
+  #status {
+    position: absolute; right: 12px; bottom: 12px;
+    display: flex; gap: 13px;
+    padding: 7px 11px; border-radius: 7px;
+    background: rgba(23,27,34,.86); border: 1px solid var(--border);
+    color: var(--muted); font-size: 12px; pointer-events: none;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #status b { color: var(--text); font-weight: 500; }
+
+  #stage { display: flex; flex: 1 1 auto; min-height: 0; }
+  #viewWrap { position: relative; flex: 1 1 auto; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  canvas.panning { cursor: grabbing; }
+  canvas.stamping { cursor: copy; }
+  canvas.erasing { cursor: cell; }
+
+  #hint {
+    position: absolute; left: 12px; bottom: 12px;
+    padding: 7px 11px; border-radius: 7px;
+    background: rgba(23,27,34,.86); border: 1px solid var(--border);
+    color: var(--muted); font-size: 12px; pointer-events: none;
+    transition: opacity .4s; max-width: calc(100% - 24px);
+  }
+  #hint kbd {
+    font: inherit; color: var(--text); background: #202631;
+    border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 4px;
+  }
+  #hint.hidden { opacity: 0; }
+
+  /* ---- tutorial drawer ---- */
+  #tutorial {
+    flex: 0 0 340px; min-width: 0;
+    display: flex; flex-direction: column;
+    background: var(--panel); border-left: 1px solid var(--border);
+    overflow: hidden;
+  }
+  #tutorial[hidden] { display: none; }
+  @media (max-width: 760px) { #tutorial { flex-basis: 100%; } #viewWrap { display: none; } }
+
+  #tutHead {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 14px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  }
+  #tutHead h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+  #tutHead .step { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #tutClose { padding: 3px 8px; line-height: 1; }
+
+  #tutBody { flex: 1 1 auto; overflow-y: auto; padding: 14px; }
+  #tutBody p { margin: 0 0 10px; }
+  #tutBody p.lead { color: var(--muted); }
+  #tutBody strong { color: #cfefff; font-weight: 600; }
+
+  .tutList { display: flex; flex-direction: column; gap: 10px; }
+  .tutCard {
+    display: block; width: 100%; text-align: left;
+    padding: 12px; border-radius: 8px; line-height: 1.45;
+  }
+  .tutCard b { display: block; margin-bottom: 3px; color: var(--text); }
+  .tutCard span { color: var(--muted); font-size: 12px; }
+
+  .progress {
+    display: flex; align-items: center; gap: 8px;
+    margin: 12px 0 4px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .bar { flex: 1 1 auto; height: 5px; border-radius: 3px; background: #232a35; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--todo); transition: width .18s; }
+  .progress.done { color: var(--ok); }
+  .progress.done .bar i { background: var(--ok); }
+
+  .warn { color: var(--stray); margin: 8px 0 0; }
+  .warn button { margin-left: 6px; padding: 2px 8px; font-size: 12px; }
+
+  #tutFoot {
+    display: flex; gap: 8px; align-items: center;
+    padding: 11px 14px; border-top: 1px solid var(--border); flex: 0 0 auto;
+  }
+  /* an explicit display beats the [hidden] attribute, so restate it */
+  #tutFoot[hidden] { display: none; }
+  #tutNext { margin-left: auto; }
+  #tutNext.ready { background: var(--accent-dim); border-color: #3b6d84; color: #cfefff; }
+  button[disabled] { opacity: .4; cursor: default; }
+  button[disabled]:hover { background: #202631; border-color: var(--border); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div class="group">
+      <button id="playBtn" class="primary" title="Space">▶ Play</button>
+      <button id="stepBtn" title="Period key (.)">Step</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <label class="ctl">Speed <input id="speed" type="range" min="1" max="121" value="20"><span class="val" id="speedVal">20/s</span></label>
+    </div>
+    <div class="sep"></div>
+    <div class="group" role="group" aria-label="Drawing mode">
+      <button id="drawBtn" class="toggle on" title="Left-drag adds cells">Draw</button>
+      <button id="eraseBtn" class="toggle" title="Left-drag removes cells (E toggles, or hold Alt)">Erase</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="randBtn">Randomize</button>
+      <label class="ctl"><input id="density" type="range" min="1" max="90" value="25"><span class="val" id="densityVal">25%</span></label>
+      <button id="clearBtn">Clear</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <select id="pattern" title="Pick a pattern, then click the grid to place it">
+        <option value="">Stamp pattern…</option>
+      </select>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="zoomOut" title="Minus key">−</button>
+      <button id="zoomIn" title="Plus key">+</button>
+      <button id="fitBtn">Fit</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="tutBtn" aria-expanded="false">Tutorials</button>
+    </div>
+  </div>
+  <div id="stage">
+    <div id="viewWrap">
+    <canvas id="view"></canvas>
+    <div id="status">
+      <span>gen <b id="genOut">0</b></span>
+      <span>pop <b id="popOut">0</b></span>
+      <span>cell <b id="cellOut">—</b></span>
+      <span>zoom <b id="zoomOut2">—</b></span>
+    </div>
+    <div id="hint">
+      <kbd>scroll</kbd> zoom &nbsp;·&nbsp; <kbd>right-drag</kbd> or <kbd>space</kbd>+drag pan &nbsp;·&nbsp;
+      <kbd>left-drag</kbd> draw &nbsp;·&nbsp; <kbd>alt</kbd>+drag or <kbd>e</kbd> erase &nbsp;·&nbsp;
+      <kbd>space</kbd> play/pause &nbsp;·&nbsp; <kbd>.</kbd> step &nbsp;·&nbsp; <kbd>f</kbd> fit
+    </div>
+    </div>
+    <aside id="tutorial" hidden>
+      <div id="tutHead">
+        <h2 id="tutTitle">Tutorials</h2>
+        <span class="step" id="tutStep"></span>
+        <button id="tutClose" title="Close tutorials" aria-label="Close tutorials">✕</button>
+      </div>
+      <div id="tutBody"></div>
+      <div id="tutFoot" hidden>
+        <button id="tutBack">Back</button>
+        <button id="tutFill">Fill it in</button>
+        <button id="tutNext">Next</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ *
+ * Grid + simulation
+ * ------------------------------------------------------------------ */
+
+const W = 250, H = 250, N = W * H;
+
+let cur  = new Uint8Array(N);
+let next = new Uint8Array(N);
+
+let generation = 0;
+let population = 0;
+let dirty = true;          // cell data changed since last texture upload
+
+function recount() {
+  let p = 0;
+  for (let i = 0; i < N; i++) p += cur[i];
+  population = p;
+}
+
+/* One generation. Dead boundaries: cells outside the 250x250 grid are
+ * always dead, so a glider that reaches an edge breaks up there.
+ * The interior is scanned without bounds checks; the border ring is
+ * handled separately with clamped neighbor lookups. */
+function stepBorderCell(c, n, x, y) {
+  let s = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    const yy = y + dy;
+    if (yy < 0 || yy >= H) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const xx = x + dx;
+      if (xx < 0 || xx >= W) continue;
+      s += c[yy * W + xx];
+    }
+  }
+  const k = y * W + x;
+  n[k] = (s === 3 || (s === 2 && c[k])) ? 1 : 0;
+}
+
+function step() {
+  const c = cur, n = next;
+
+  // --- interior: rows 1..H-2, cols 1..W-2, no bounds checks needed ---
+  for (let y = 1; y < H - 1; y++) {
+    for (let k = y * W + 1, end = y * W + W - 1; k < end; k++) {
+      const s = c[k - W - 1] + c[k - W] + c[k - W + 1]
+              + c[k     - 1]            + c[k     + 1]
+              + c[k + W - 1] + c[k + W] + c[k + W + 1];
+      n[k] = (s === 3 || (s === 2 && c[k])) ? 1 : 0;
+    }
+  }
+
+  // --- border ring: clamped lookups, everything outside counts as dead ---
+  for (let x = 0; x < W; x++) { stepBorderCell(c, n, x, 0); stepBorderCell(c, n, x, H - 1); }
+  for (let y = 1; y < H - 1; y++) { stepBorderCell(c, n, 0, y); stepBorderCell(c, n, W - 1, y); }
+
+  // swap buffers
+  const t = cur; cur = next; next = t;
+
+  generation++;
+  recount();
+  dirty = true;
+}
+
+/* ------------------------------------------------------------------ *
+ * Patterns
+ * ------------------------------------------------------------------ */
+
+const PATTERNS = {
+  "Glider": [
+    ".O.",
+    "..O",
+    "OOO",
+  ],
+  "Lightweight spaceship": [
+    "O..O.",
+    "....O",
+    "O...O",
+    ".OOOO",
+  ],
+  "Pulsar": [
+    "..OOO...OOO..",
+    ".............",
+    "O....O.O....O",
+    "O....O.O....O",
+    "O....O.O....O",
+    "..OOO...OOO..",
+    ".............",
+    "..OOO...OOO..",
+    "O....O.O....O",
+    "O....O.O....O",
+    "O....O.O....O",
+    ".............",
+    "..OOO...OOO..",
+  ],
+  "Gosper glider gun": [
+    "........................O...........",
+    "......................O.O...........",
+    "............OO......OO............OO",
+    "...........O...O....OO............OO",
+    "OO........O.....O...OO..............",
+    "OO........O...O.OO....O.O...........",
+    "..........O.....O.......O...........",
+    "...........O...O....................",
+    "............OO......................",
+  ],
+  "Lightweight spaceship gun": [
+    "..................................O.............................",
+    "................................OOOO............................",
+    ".......................OO........O.OO......................O....",
+    ".....................O..O......O.O.OOO........OO..........O.....",
+    "....................O............O.OO..........O.....OO..O....O.",
+    "............OO......O...........OOOO..................O.O..O.OO.",
+    "............O.......O.............O......................OO.....",
+    ".....................O..O.......................................",
+    ".......................OO.......................................",
+    "................................................................",
+    "................................................................",
+    "................................................................",
+    "................................................................",
+    "................................................................",
+    "................................................................",
+    "................................................................",
+    "..............................................OO.O...O.OO.......",
+    "..............................................O.........O.......",
+    "...............................................OO.....OO........",
+    "............................................OOO..OOOOO..OOO.....",
+    "............................................O..O.......O..O.....",
+    "...........OO................................OO.........OO......",
+    "...........O....................................................",
+    "O.......OO............OO........................................",
+    "OO.....OOO.......OO.....O..........................O............",
+    "........OO......O.O......O.........................OO...........",
+    "...........O......O......O..............O.....OO....OO.........O",
+    "...........OO............O..............O.O...OO....OOO.......OO",
+    "........................O................O.O..OO....OO..........",
+    "......................OO.................O..O......OO...........",
+    ".........................................O.O.......O............",
+    "........................................O.O.....................",
+    "........................................O.......................",
+  ],
+  "Direction changer": [
+    "................OO.........",
+    "................O.O........",
+    "..................O....OO..",
+    "..............OOOO.OO..O..O",
+    "..............O..O.O.O.O.OO",
+    ".................O.O.O.O...",
+    "..................OO.O.O...",
+    "......................O....",
+    "...........................",
+    "........OO.................",
+    ".........O.......OO........",
+    ".........O.O.....OO........",
+    "..........OO...............",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "....................OO.....",
+    "....................O......",
+    ".....................OOO...",
+    ".......................O...",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    "...........................",
+    ".O.........................",
+    ".OO........................",
+    "O.O........................",
+  ],
+  "Switch engine": [
+    ".O.O........................",
+    "O...........................",
+    ".O..O.......................",
+    "...OOO......................",
+    "............................",
+    "..........................OO",
+    "..........................O.",
+  ],
+  "R-pentomino": [
+    ".OO",
+    "OO.",
+    ".O.",
+  ],
+  "Acorn": [
+    ".O.....",
+    "...O...",
+    "OO..OOO",
+  ],
+  "Diehard": [
+    "......O.",
+    "OO......",
+    ".O...OOO",
+  ],
+};
+
+function patternCells(rows) {
+  const cells = [];
+  let w = 0;
+  for (const r of rows) w = Math.max(w, r.length);
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) if (row[x] === "O") cells.push([x, y]);
+  });
+  return { cells, w, h: rows.length };
+}
+
+const PATTERN_DATA = {};
+for (const [name, rows] of Object.entries(PATTERNS)) PATTERN_DATA[name] = patternCells(rows);
+
+/* Pattern rotated by `rot` quarter-turns clockwise. A 90° turn sends
+ * (x, y) -> (h-1-y, x) and swaps the bounding box. Results are cached because
+ * the ghost preview asks for one every frame. */
+const ROT_CACHE = {};
+function rotatedData(name, rot) {
+  rot = ((rot % 4) + 4) % 4;
+  const key = name + "|" + rot;
+  if (ROT_CACHE[key]) return ROT_CACHE[key];
+  let { cells, w, h } = PATTERN_DATA[name];
+  for (let i = 0; i < rot; i++) {
+    cells = cells.map(([x, y]) => [h - 1 - y, x]);
+    const t = w; w = h; h = t;
+  }
+  return (ROT_CACHE[key] = { cells, w, h });
+}
+
+/* ------------------------------------------------------------------ *
+ * Canvas + camera
+ * ------------------------------------------------------------------ */
+
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d", { alpha: false });
+
+// Offscreen 1px-per-cell texture. Scaled up with nearest-neighbor so the
+// cost of drawing is independent of zoom level.
+const tex = document.createElement("canvas");
+tex.width = W; tex.height = H;
+const texCtx = tex.getContext("2d");
+const texImage = texCtx.createImageData(W, H);
+const texPixels = new Uint32Array(texImage.data.buffer);
+
+// ImageData bytes are R,G,B,A, so a little-endian Uint32 word is 0xAABBGGRR.
+const COLOR_ALIVE = 0xfff8f0e8 | 0;   // #e8f0f8 — cool white
+const COLOR_DEAD  = 0xff201914 | 0;   // #141920 — near-black blue
+
+const MIN_SCALE = 0.5, MAX_SCALE = 64;
+const cam = { x: 0, y: 0, scale: 2 };   // x,y = world cell coord at canvas top-left; scale = device px per cell
+
+let cssW = 0, cssH = 0, dpr = 1;
+
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  cssW = rect.width; cssH = rect.height;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+  }
+}
+
+/* Set once the user pans or zooms themselves. Until then the view re-fits on
+ * every layout change — the toolbar can wrap to a different number of rows
+ * after first paint, so the stage height at boot is not the final one. */
+let camTouched = false;
+
+function fitView() {
+  resize();
+  camTouched = false;   // "Fit" hands the view back to auto-fitting
+  const s = Math.min(canvas.width / W, canvas.height / H) * 0.94;
+  cam.scale = clamp(s, MIN_SCALE, MAX_SCALE);
+  cam.x = W / 2 - canvas.width / (2 * cam.scale);
+  cam.y = H / 2 - canvas.height / (2 * cam.scale);
+}
+
+/* Re-fit while untouched, otherwise just keep the camera in bounds. */
+function onLayoutChange() {
+  if (camTouched) { resize(); clampCam(); }
+  else fitView();
+  if (tut.active) focusOn(tut.bbox);
+}
+
+/* Frame a cell-space box, with room around it and a ceiling on how far it
+ * zooms in, so tutorial cells are big enough to click accurately. */
+function focusOn(box, maxScale = 34) {
+  if (!box) return;
+  resize();
+  const pad = 6;
+  const bw = box.x1 - box.x0 + 1 + pad * 2;
+  const bh = box.y1 - box.y0 + 1 + pad * 2;
+  const s = Math.min(canvas.width / bw, canvas.height / bh);
+  cam.scale = clamp(s, MIN_SCALE, Math.min(MAX_SCALE, maxScale * dpr));
+  camTouched = true;
+  cam.x = (box.x0 + box.x1 + 1) / 2 - canvas.width / (2 * cam.scale);
+  cam.y = (box.y0 + box.y1 + 1) / 2 - canvas.height / (2 * cam.scale);
+  clampCam();
+}
+
+/* screen (CSS px, relative to canvas) -> world cell coords (float) */
+function screenToWorld(sx, sy) {
+  return { x: cam.x + (sx * dpr) / cam.scale, y: cam.y + (sy * dpr) / cam.scale };
+}
+
+function zoomAt(sx, sy, factor) {
+  camTouched = true;
+  const before = screenToWorld(sx, sy);
+  cam.scale = clamp(cam.scale * factor, MIN_SCALE, MAX_SCALE);
+  cam.x = before.x - (sx * dpr) / cam.scale;
+  cam.y = before.y - (sy * dpr) / cam.scale;
+  clampCam();
+}
+
+/* Keep at least a slice of the grid on screen. */
+function clampCam() {
+  const viewW = canvas.width / cam.scale;
+  const viewH = canvas.height / cam.scale;
+  const marginX = Math.min(viewW, W) * 0.75;
+  const marginY = Math.min(viewH, H) * 0.75;
+  cam.x = clamp(cam.x, -viewW + marginX, W - marginX);
+  cam.y = clamp(cam.y, -viewH + marginY, H - marginY);
+}
+
+/* ------------------------------------------------------------------ *
+ * Rendering
+ * ------------------------------------------------------------------ */
+
+function uploadTexture() {
+  for (let i = 0; i < N; i++) texPixels[i] = cur[i] ? COLOR_ALIVE : COLOR_DEAD;
+  texCtx.putImageData(texImage, 0, 0);
+  dirty = false;
+}
+
+let ghost = null;   // {name, cx, cy} pattern preview under the cursor
+
+function draw() {
+  if (dirty) uploadTexture();
+
+  const cw = canvas.width, ch = canvas.height;
+  ctx.fillStyle = "#0a0d12";
+  ctx.fillRect(0, 0, cw, ch);
+
+  const s = cam.scale;
+  const tx = -cam.x * s;
+  const ty = -cam.y * s;
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tex, 0, 0, W, H, tx, ty, W * s, H * s);
+
+  // grid lines once cells are big enough to be worth separating
+  if (s >= 7) {
+    const x0 = Math.max(0, Math.floor(cam.x));
+    const x1 = Math.min(W, Math.ceil(cam.x + cw / s));
+    const y0 = Math.max(0, Math.floor(cam.y));
+    const y1 = Math.min(H, Math.ceil(cam.y + ch / s));
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = x0; x <= x1; x++) {
+      const px = Math.round(tx + x * s) + 0.5;
+      ctx.moveTo(px, Math.max(0, ty)); ctx.lineTo(px, Math.min(ch, ty + H * s));
+    }
+    for (let y = y0; y <= y1; y++) {
+      const py = Math.round(ty + y * s) + 0.5;
+      ctx.moveTo(Math.max(0, tx), py); ctx.lineTo(Math.min(cw, tx + W * s), py);
+    }
+    ctx.stroke();
+  }
+
+  // border of the universe
+  ctx.strokeStyle = "rgba(90,200,250,0.45)";
+  ctx.lineWidth = Math.max(1, dpr);
+  ctx.strokeRect(tx - 0.5, ty - 0.5, W * s + 1, H * s + 1);
+
+  // tutorial: cells still to place, and cells that shouldn't be there
+  if (tut.active) {
+    const cell = Math.max(1, s);
+    ctx.lineWidth = Math.max(1, dpr * 1.5);
+
+    ctx.fillStyle = "rgba(240,180,41,0.22)";
+    ctx.strokeStyle = "rgba(240,180,41,0.95)";
+    for (const [gx, gy] of tut.targets) {
+      if (cur[gy * W + gx]) continue;               // already placed
+      const px = tx + gx * s, py = ty + gy * s;
+      ctx.fillRect(px, py, cell, cell);
+      ctx.strokeRect(px + 0.5, py + 0.5, cell - 1, cell - 1);
+    }
+
+    ctx.strokeStyle = "rgba(226,104,107,0.95)";
+    for (const key of tut.strays) {
+      const gx = key % W, gy = (key / W) | 0;
+      ctx.strokeRect(tx + gx * s + 0.5, ty + gy * s + 0.5, cell - 1, cell - 1);
+    }
+  }
+
+  // pattern stamp preview
+  if (ghost) {
+    const p = rotatedData(ghost.name, ghost.rot);
+    const ox = ghost.cx - (p.w >> 1);
+    const oy = ghost.cy - (p.h >> 1);
+    ctx.fillStyle = "rgba(90,200,250,0.55)";
+    for (const [dx, dy] of p.cells) {
+      const gx = ox + dx, gy = oy + dy;
+      if (gx < 0 || gy < 0 || gx >= W || gy >= H) continue;
+      ctx.fillRect(tx + gx * s, ty + gy * s, Math.max(1, s), Math.max(1, s));
+    }
+    ctx.strokeStyle = "rgba(90,200,250,0.5)";
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.strokeRect(tx + ox * s, ty + oy * s, p.w * s, p.h * s);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Main loop
+ * ------------------------------------------------------------------ */
+
+let running = false;
+let speed = 20;          // generations per second; MAX_SPEED means "once per frame"
+const MAX_SPEED = 121;
+let acc = 0;
+let last = performance.now();
+
+function frame(now) {
+  const dt = Math.min(100, now - last);
+  last = now;
+
+  if (running) {
+    if (speed >= MAX_SPEED) {
+      step();
+    } else {
+      acc += dt;
+      const interval = 1000 / speed;
+      let budget = 8;
+      while (acc >= interval && budget-- > 0) { acc -= interval; step(); }
+      if (acc > interval * 8) acc = 0;
+    }
+  }
+
+  draw();
+  updateStatus();
+  refreshTutorial();
+  requestAnimationFrame(frame);
+}
+
+/* ------------------------------------------------------------------ *
+ * Status readout
+ * ------------------------------------------------------------------ */
+
+const genOut = document.getElementById("genOut");
+const popOut = document.getElementById("popOut");
+const cellOut = document.getElementById("cellOut");
+const zoomOut2 = document.getElementById("zoomOut2");
+let hoverCell = null;
+const shown = { gen: -1, pop: -1, cell: "", zoom: "" };
+
+/* Only touch the DOM when a value actually changed — this runs every frame. */
+function updateStatus() {
+  if (shown.gen !== generation) { shown.gen = generation; genOut.textContent = generation.toLocaleString(); }
+  if (shown.pop !== population) { shown.pop = population; popOut.textContent = population.toLocaleString(); }
+
+  const cell = hoverCell ? `${hoverCell.x}, ${hoverCell.y}` : "—";
+  if (shown.cell !== cell) { shown.cell = cell; cellOut.textContent = cell; }
+
+  const z = cam.scale / dpr;
+  const zoom = z >= 1 ? `${z.toFixed(z < 10 ? 1 : 0)}×` : `${z.toFixed(2)}×`;
+  if (shown.zoom !== zoom) { shown.zoom = zoom; zoomOut2.textContent = zoom; }
+}
+
+/* ------------------------------------------------------------------ *
+ * Grid editing
+ * ------------------------------------------------------------------ */
+
+function setCell(x, y, v) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = y * W + x;
+  if (cur[i] !== v) {
+    cur[i] = v;
+    population += v ? 1 : -1;
+    dirty = true;
+  }
+}
+
+/* Fill in the cells between two drag samples so fast strokes stay connected. */
+function paintLine(x0, y0, x1, y1, v) {
+  let dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+  let dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    setCell(x0, y0, v);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+function clearGrid() {
+  cur.fill(0);
+  generation = 0; population = 0; dirty = true; acc = 0;
+}
+
+function randomize(densityPct) {
+  const p = densityPct / 100;
+  for (let i = 0; i < N; i++) cur[i] = Math.random() < p ? 1 : 0;
+  generation = 0; acc = 0; recount(); dirty = true;
+}
+
+function stampPattern(name, cx, cy, rot = 0) {
+  const p = rotatedData(name, rot);
+  const ox = cx - (p.w >> 1), oy = cy - (p.h >> 1);
+  for (const [dx, dy] of p.cells) setCell(ox + dx, oy + dy, 1);
+}
+
+/* ------------------------------------------------------------------ *
+ * Input
+ * ------------------------------------------------------------------ */
+
+let spaceDown = false;
+let spaceUsedForPan = false;
+let drag = null;   // {mode: 'paint'|'pan', ...}
+let armedPattern = "";
+let stampRot = 0;         // quarter-turns applied to the armed pattern
+let paintMode = "draw";   // 'draw' | 'erase'; Alt inverts it for one stroke
+
+function setPaintMode(m) {
+  paintMode = m;
+  document.getElementById("drawBtn").classList.toggle("on", m === "draw");
+  document.getElementById("eraseBtn").classList.toggle("on", m === "erase");
+  canvas.classList.toggle("erasing", m === "erase");
+}
+
+function cellAt(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const w = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+  return { x: Math.floor(w.x), y: Math.floor(w.y) };
+}
+
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+canvas.addEventListener("pointerdown", ev => {
+  canvas.setPointerCapture(ev.pointerId);
+  hideHint();
+
+  if (ev.pointerType === "touch") { touchDown(ev); return; }
+
+  const panning = ev.button === 1 || ev.button === 2 || (ev.button === 0 && spaceDown);
+  if (panning) {
+    if (spaceDown) spaceUsedForPan = true;
+    drag = { mode: "pan", lastX: ev.clientX, lastY: ev.clientY };
+    canvas.classList.add("panning");
+    ev.preventDefault();
+    return;
+  }
+
+  if (ev.button !== 0) return;
+  const c = cellAt(ev);
+
+  if (armedPattern) {
+    stampPattern(armedPattern, c.x, c.y, stampRot);
+    if (!ev.shiftKey) disarmPattern();
+    return;
+  }
+
+  // Alt inverts the current mode, so you can rub something out mid-drawing.
+  const erasing = (paintMode === "erase") !== ev.altKey;
+  const value = erasing ? 0 : 1;
+  drag = { mode: "paint", value, lastX: c.x, lastY: c.y };
+  setCell(c.x, c.y, value);
+});
+
+canvas.addEventListener("pointermove", ev => {
+  if (ev.pointerType === "touch") { touchMove(ev); return; }
+
+  const c = cellAt(ev);
+  hoverCell = (c.x >= 0 && c.y >= 0 && c.x < W && c.y < H) ? c : null;
+  if (armedPattern) ghost = { name: armedPattern, cx: c.x, cy: c.y, rot: stampRot };
+
+  if (!drag) return;
+  if (drag.mode === "pan") {
+    camTouched = true;
+    cam.x -= (ev.clientX - drag.lastX) * dpr / cam.scale;
+    cam.y -= (ev.clientY - drag.lastY) * dpr / cam.scale;
+    drag.lastX = ev.clientX; drag.lastY = ev.clientY;
+    clampCam();
+  } else {
+    paintLine(drag.lastX, drag.lastY, c.x, c.y, drag.value);
+    drag.lastX = c.x; drag.lastY = c.y;
+  }
+});
+
+function endDrag(ev) {
+  if (ev && ev.pointerType === "touch") { touchUp(ev); return; }
+  drag = null;
+  canvas.classList.remove("panning");
+}
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("pointerleave", ev => {
+  if (ev.pointerType !== "touch") { hoverCell = null; ghost = null; }
+});
+
+canvas.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  // normalize line/page deltas so trackpads and mice feel similar
+  let d = ev.deltaY;
+  if (ev.deltaMode === 1) d *= 16;
+  else if (ev.deltaMode === 2) d *= 100;
+  const factor = Math.exp(-d * 0.0022);
+  zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, factor);
+  hideHint();
+}, { passive: false });
+
+/* --- touch: one finger pans, two fingers pinch-zoom --- */
+const touches = new Map();
+let pinch = null;
+
+function touchDown(ev) { touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); pinch = null; }
+
+function touchMove(ev) {
+  if (!touches.has(ev.pointerId)) return;
+  const prev = touches.get(ev.pointerId);
+  touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+  if (touches.size === 1) {
+    camTouched = true;
+    cam.x -= (ev.clientX - prev.x) * dpr / cam.scale;
+    cam.y -= (ev.clientY - prev.y) * dpr / cam.scale;
+    clampCam();
+  } else if (touches.size === 2) {
+    const [a, b] = [...touches.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+    if (pinch && pinch.dist > 0) {
+      const rect = canvas.getBoundingClientRect();
+      zoomAt(midX - rect.left, midY - rect.top, dist / pinch.dist);
+    }
+    pinch = { dist };
+  }
+}
+
+function touchUp(ev) { touches.delete(ev.pointerId); pinch = null; }
+
+/* --- keyboard --- */
+window.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT") return;
+  const k = ev.key;
+
+  if (k === " ") {
+    if (!spaceDown) { spaceDown = true; spaceUsedForPan = false; }
+    ev.preventDefault();
+    return;
+  }
+  if (k === "." ) { setRunning(false); step(); ev.preventDefault(); return; }
+  if (k === "+" || k === "=") { zoomAt(cssW / 2, cssH / 2, 1.25); ev.preventDefault(); return; }
+  if (k === "-" || k === "_") { zoomAt(cssW / 2, cssH / 2, 1 / 1.25); ev.preventDefault(); return; }
+  if (k === "Escape") { disarmPattern(); return; }
+  if (k === "f" || k === "F") { fitView(); return; }
+
+  // While a stamp is armed, q/e rotate it. Outside stamp mode 'e' keeps its
+  // usual job of toggling the eraser.
+  if (armedPattern && (k === "q" || k === "Q" || k === "e" || k === "E")) {
+    stampRot = (stampRot + (k === "q" || k === "Q" ? 3 : 1)) % 4;
+    if (ghost) ghost.rot = stampRot;
+    ev.preventDefault();
+    return;
+  }
+  // 'e' toggles; 'd' is left alone because WASD panning already owns it
+  if (k === "e" || k === "E") { setPaintMode(paintMode === "erase" ? "draw" : "erase"); return; }
+
+  const panStep = 60 * dpr / cam.scale;
+  let moved = true;
+  switch (k) {
+    case "ArrowLeft": case "a": case "A": cam.x -= panStep; break;
+    case "ArrowRight": case "d": case "D": cam.x += panStep; break;
+    case "ArrowUp": case "w": case "W": cam.y -= panStep; break;
+    case "ArrowDown": case "s": case "S": cam.y += panStep; break;
+    default: moved = false;
+  }
+  if (moved) { camTouched = true; clampCam(); ev.preventDefault(); }
+});
+
+window.addEventListener("keyup", ev => {
+  if (ev.key === " ") {
+    if (spaceDown && !spaceUsedForPan && !drag) setRunning(!running);
+    spaceDown = false;
+    spaceUsedForPan = false;
+    canvas.classList.remove("panning");
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Toolbar wiring
+ * ------------------------------------------------------------------ */
+
+const playBtn = document.getElementById("playBtn");
+const speedSlider = document.getElementById("speed");
+const speedVal = document.getElementById("speedVal");
+const densitySlider = document.getElementById("density");
+const densityVal = document.getElementById("densityVal");
+const patternSelect = document.getElementById("pattern");
+
+function setRunning(v) {
+  running = v;
+  acc = 0;
+  playBtn.textContent = running ? "❚❚ Pause" : "▶ Play";
+}
+
+/* Drop focus after a click so the Space shortcut doesn't also re-trigger
+ * the last button the user pressed. */
+document.getElementById("toolbar").addEventListener("click", ev => {
+  if (ev.target.tagName === "BUTTON") ev.target.blur();
+});
+
+playBtn.addEventListener("click", () => setRunning(!running));
+document.getElementById("drawBtn").addEventListener("click", () => setPaintMode("draw"));
+document.getElementById("eraseBtn").addEventListener("click", () => setPaintMode("erase"));
+document.getElementById("stepBtn").addEventListener("click", () => { setRunning(false); step(); });
+document.getElementById("clearBtn").addEventListener("click", clearGrid);
+document.getElementById("randBtn").addEventListener("click", () => randomize(+densitySlider.value));
+document.getElementById("zoomIn").addEventListener("click", () => zoomAt(cssW / 2, cssH / 2, 1.4));
+document.getElementById("zoomOut").addEventListener("click", () => zoomAt(cssW / 2, cssH / 2, 1 / 1.4));
+document.getElementById("fitBtn").addEventListener("click", fitView);
+
+speedSlider.addEventListener("input", () => {
+  speed = +speedSlider.value;
+  speedVal.textContent = speed >= MAX_SPEED ? "max" : `${speed}/s`;
+  acc = 0;
+});
+densitySlider.addEventListener("input", () => {
+  densityVal.textContent = `${densitySlider.value}%`;
+});
+
+for (const name of Object.keys(PATTERNS)) {
+  const opt = document.createElement("option");
+  opt.value = name; opt.textContent = name;
+  patternSelect.appendChild(opt);
+}
+patternSelect.addEventListener("change", () => {
+  armedPattern = patternSelect.value;
+  stampRot = 0;
+  canvas.classList.toggle("stamping", !!armedPattern);
+  if (!armedPattern) ghost = null;
+  refreshHint();
+});
+function disarmPattern() {
+  armedPattern = "";
+  stampRot = 0;
+  patternSelect.value = "";
+  ghost = null;
+  canvas.classList.remove("stamping");
+  refreshHint();
+}
+
+/* ------------------------------------------------------------------ *
+ * Tutorials
+ * ------------------------------------------------------------------ */
+
+/* Absolute cells of a named pattern placed at `origin`, optionally limited to
+ * a sub-group by a predicate on the pattern-local coordinates. */
+function absCells(name, origin, pick) {
+  return PATTERN_DATA[name].cells
+    .filter(([x, y]) => !pick || pick(x, y))
+    .map(([x, y]) => [origin.x + x, origin.y + y]);
+}
+
+const GLIDER_AT = { x: 124, y: 124 };
+const LWSS_AT   = { x: 123, y: 123 };
+const PULSAR_AT = { x: 119, y: 119 };
+const GUN_AT    = { x: 107, y: 121 };
+// Sits well left of centre so its spaceships get a long runway before the edge.
+const LWSSGUN_AT = { x: 12, y: 108 };
+// Up and left, so the turned glider has the whole grid to cross afterwards.
+const REFLECT_AT = { x: 40, y: 30 };
+// Bottom-right corner: the switch engine crawls up and to the left, so this
+// gives it the full diagonal — about 2,700 generations before it reaches a wall.
+const NUKE_AT = { x: 218, y: 238 };
+
+const TUTORIALS = [
+  {
+    id: "glider",
+    title: "Build a glider",
+    teaser: "Five cells that walk diagonally across the grid, forever.",
+    pattern: "Glider",
+    origin: GLIDER_AT,
+    steps: [
+      {
+        body: `<p>A <strong>glider</strong> is the smallest spaceship in Life: five cells
+               that return to their own shape every four generations, one square
+               down and one square right of where they started.</p>
+               <p class="lead">You'll place its five cells by hand. Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Draw a <strong>horizontal row of three</strong> cells.</p>
+               <p class="lead">Click each highlighted square, or drag across all three.
+               This row is the glider's base.</p>`,
+        cells: o => absCells("Glider", o, (x, y) => y === 2),
+      },
+      {
+        body: `<p>Add one cell <strong>directly above the right end</strong> of that row.</p>
+               <p class="lead">The shape is now asymmetric — that lopsidedness is what
+               makes it travel instead of sit still.</p>`,
+        cells: o => absCells("Glider", o, (x, y) => y === 1),
+      },
+      {
+        body: `<p>Add the last cell <strong>above the middle column</strong>, one row higher
+               again.</p>
+               <p class="lead">That's the whole glider: five cells.</p>`,
+        cells: o => absCells("Glider", o, (x, y) => y === 0),
+      },
+      {
+        watch: true,
+        body: `<p>Done. Now watch it move.</p>
+               <p class="lead">Step through four generations and the glider comes back to
+               this exact shape, shifted one cell diagonally. Repeat forever and it
+               crosses the grid — until it reaches an edge, where it breaks up,
+               because this universe doesn't wrap.</p>`,
+        action: { label: "Step 4 generations", run: () => { for (let i = 0; i < 4; i++) step(); } },
+      },
+    ],
+  },
+  {
+    id: "lwss",
+    title: "Build a lightweight spaceship",
+    teaser: "Nine cells that fly straight sideways, twice as fast as a glider.",
+    pattern: "Lightweight spaceship",
+    origin: LWSS_AT,
+    steps: [
+      {
+        body: `<p>The <strong>lightweight spaceship</strong> — LWSS — is the smallest
+               ship that travels in a straight line rather than diagonally.</p>
+               <p class="lead">It covers two cells every four generations, so it crosses
+               the grid twice as fast as a glider. Nine cells, built back to front.
+               Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Draw the <strong>hull</strong>: a row of four cells.</p>
+               <p class="lead">This is the bottom edge of the ship. Everything else
+               hangs above it.</p>`,
+        cells: o => absCells("Lightweight spaceship", o, (x, y) => y === 3),
+      },
+      {
+        body: `<p>Stack <strong>two cells above the right end</strong> of the hull.</p>
+               <p class="lead">The ship travels to the right, so this is the prow. The
+               column of three you've now made on the right edge is what drives it
+               forward.</p>`,
+        cells: o => absCells("Lightweight spaceship", o, (x, y) => x === 4 && y > 0 && y < 3),
+      },
+      {
+        body: `<p>Add <strong>two cells up the far left edge</strong> — one at the top
+               row, one two rows below it, with a gap between.</p>
+               <p class="lead">These trail behind. The gap matters: fill it in and the
+               ship collapses into a blob.</p>`,
+        cells: o => absCells("Lightweight spaceship", o, x => x === 0),
+      },
+      {
+        body: `<p>One last cell, <strong>top row, second from the right</strong>.</p>
+               <p class="lead">That's all nine. The shape is deliberately lopsided —
+               a symmetric version would sit still or die.</p>`,
+        cells: o => absCells("Lightweight spaceship", o, (x, y) => x === 3 && y === 0),
+      },
+      {
+        watch: true,
+        body: `<p>Step it forward and watch it fly.</p>
+               <p class="lead">After four generations the ship is back to this exact
+               shape, two cells further right — the glider only manages one cell
+               diagonally in the same time. It'll run until it hits the edge and breaks
+               apart.</p>`,
+        action: { label: "Step 4 generations", run: () => { for (let i = 0; i < 4; i++) step(); } },
+      },
+    ],
+  },
+  {
+    id: "pulsar",
+    title: "Build a pulsar",
+    teaser: "48 cells in four identical corners, blinking on a three-beat loop.",
+    pattern: "Pulsar",
+    origin: PULSAR_AT,
+    steps: [
+      {
+        body: `<p>The <strong>pulsar</strong> is the most common large oscillator: 48
+               cells that cycle through three shapes and return to the start, over and
+               over, without moving.</p>
+               <p class="lead">It has four-fold symmetry — you'll build one corner, then
+               repeat it three times. Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Build the <strong>top-left corner</strong>: a row of three along the
+               top, a row of three along the bottom, and a column of three down each
+               side.</p>
+               <p class="lead">Like a square with its corners and midpoints missing.
+               Twelve cells — this shape is the whole pattern in miniature.</p>`,
+        cells: o => absCells("Pulsar", o, (x, y) => x < 6 && y < 6),
+      },
+      {
+        body: `<p>Repeat it in the <strong>top-right corner</strong>, mirrored.</p>
+               <p class="lead">Leave the empty column down the middle — the two halves
+               never touch. They interact only through the gap.</p>`,
+        cells: o => absCells("Pulsar", o, (x, y) => x > 6 && y < 6),
+      },
+      {
+        body: `<p>Now the <strong>bottom-left corner</strong>, mirrored downward.</p>
+               <p class="lead">Same twelve cells, flipped. Keep the empty middle row
+               clear as well.</p>`,
+        cells: o => absCells("Pulsar", o, (x, y) => x < 6 && y > 6),
+      },
+      {
+        body: `<p>Finally the <strong>bottom-right corner</strong> to complete the
+               symmetry.</p>
+               <p class="lead">Four identical corners, 48 cells, with an empty cross
+               through the centre.</p>`,
+        cells: o => absCells("Pulsar", o, (x, y) => x > 6 && y > 6),
+      },
+      {
+        watch: true,
+        body: `<p>Press play and watch it beat.</p>
+               <p class="lead">The pulsar has period 3: it passes through two other
+               shapes then snaps back to this one, forever. Unlike the glider and the
+               spaceship it goes nowhere — an oscillator, not a ship. Slow the speed
+               slider down to see the three phases separately.</p>`,
+        action: { label: "Play", run: () => setRunning(true) },
+      },
+    ],
+  },
+  {
+    id: "gun",
+    title: "Build a glider gun",
+    teaser: "36 cells that fire a new glider every 30 generations, forever.",
+    pattern: "Gosper glider gun",
+    origin: GUN_AT,
+    steps: [
+      {
+        body: `<p>The <strong>Gosper glider gun</strong> was the first pattern found that
+               grows without limit — it spits out a glider every 30 generations and
+               never stops.</p>
+               <p class="lead">It's built from four parts: two oscillators that would
+               fly apart on their own, and two still lifes that pen them in. You'll
+               place them in that order. Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Place the <strong>left block</strong> — a 2×2 square.</p>
+               <p class="lead">A block is a still life: each of its four cells has
+               exactly three neighbours, so it survives unchanged forever. It acts as
+               a wall.</p>`,
+        cells: o => absCells("Gosper glider gun", o, x => x <= 1),
+      },
+      {
+        body: `<p>Place the <strong>left shuttle</strong>, the 16-cell arrangement to the
+               right of the block.</p>
+               <p class="lead">On its own this is a <em>queen bee shuttle</em>: it crawls
+               sideways, then would explode into debris. The block you just placed
+               stops it and bounces it back.</p>`,
+        cells: o => absCells("Gosper glider gun", o, x => x >= 10 && x <= 17),
+      },
+      {
+        body: `<p>Place the <strong>right shuttle</strong> — the mirror-image group.</p>
+               <p class="lead">Two shuttles running toward each other. Where their
+               debris collides, a glider forms and escapes. That collision is the gun's
+               entire trick.</p>`,
+        cells: o => absCells("Gosper glider gun", o, x => x >= 20 && x <= 24),
+      },
+      {
+        body: `<p>Place the <strong>right block</strong> to close the gun.</p>
+               <p class="lead">Same job as the first block, at the far end: it's the wall
+               the right shuttle bounces off.</p>`,
+        cells: o => absCells("Gosper glider gun", o, x => x >= 34),
+      },
+      {
+        watch: true,
+        body: `<p>All 36 cells are in place. Press play.</p>
+               <p class="lead">Every 30 generations a glider peels off toward the
+               bottom-right. Zoom out with <kbd>f</kbd> to watch the stream cross the
+               grid — the leaders break up on the far edge while new ones keep
+               coming.</p>`,
+        action: { label: "Play", run: () => setRunning(true) },
+      },
+    ],
+  },
+  {
+    id: "nuke",
+    title: "Build an endless nuke",
+    teaser: "Eleven cells that go off and never stop growing.",
+    pattern: "Switch engine",
+    origin: NUKE_AT,
+    steps: [
+      {
+        body: `<p>Most small patterns burn out. They flare up, throw off some debris,
+               and settle into a handful of blocks and blinkers that never change
+               again.</p>
+               <p class="lead">This one doesn't. Eleven cells — Charles Corderman's
+               <strong>switch engine</strong>, the smallest pattern known to grow
+               forever. It detonates, and then it just keeps going, getting bigger for
+               as long as you let it run. Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Place the <strong>engine</strong>: eight cells, over on the left.</p>
+               <p class="lead">There is nothing obviously special about them. No
+               symmetry, no neat shape — this arrangement was found by searching, not
+               by design.</p>`,
+        cells: o => absCells("Switch engine", o, x => x < 20),
+      },
+      {
+        body: `<p>Now three cells on their own, <strong>well off to the right</strong>.</p>
+               <p class="lead">They settle immediately into a block and sit there doing
+               nothing for 136 generations, until the blast reaches them and consumes
+               them. Leave them out and the engine still goes off — but it sprays
+               gliders across an area several times wider and never settles into
+               anything regular. These three cells are what turn an explosion into a
+               machine.</p>`,
+        cells: o => absCells("Switch engine", o, x => x >= 20),
+      },
+      {
+        watch: true,
+        body: `<p>Press play, then push the speed slider to <strong>max</strong> and hit
+               <kbd>f</kbd> to watch the whole grid.</p>
+               <p class="lead">It blows up, and out of the mess a single engine crawls
+               away diagonally up and to the left — one cell every twelve generations,
+               dropping a 2×2 block behind it as it goes. Fifty-four blocks by
+               generation 2,400, and it never stops making them: the population climbs
+               without limit. That's the whole trick, and it's why this is a nuke that
+               keeps getting bigger rather than one that burns out.</p>
+               <p class="lead">It will reach the far corner at around generation 2,700.
+               Nothing goes on forever in a 250×250 box — real unbounded growth needs
+               an unbounded grid.</p>`,
+        action: { label: "Play", run: () => { speedSlider.value = MAX_SPEED;
+                                              speedSlider.dispatchEvent(new Event("input"));
+                                              setRunning(true); } },
+      },
+    ],
+  },
+  {
+    id: "reflector",
+    title: "Build a direction changer",
+    teaser: "A still life that catches a glider and sends it off at right angles.",
+    pattern: "Direction changer",
+    origin: REFLECT_AT,
+    steps: [
+      {
+        body: `<p>A glider can't turn. It goes one way forever until something stops
+               it. A <strong>direction changer</strong> — a reflector — is a still life
+               that a glider can crash into such that the wreckage settles back into a
+               glider heading somewhere else, leaving the still life untouched.</p>
+               <p class="lead">This one turns a glider through <strong>90°</strong>:
+               in travelling up and right, out travelling down and right. You'll build
+               the four pieces, then fire a glider at it yourself. Starting clears the
+               grid.</p>`,
+      },
+      {
+        body: `<p>Place the <strong>main body</strong> — the big piece along the top,
+               31 cells.</p>
+               <p class="lead">Every piece here is a still life: left alone, none of
+               them ever changes. Their shapes only matter for the few generations when
+               the glider's debris is washing over them.</p>`,
+        cells: o => absCells("Direction changer", o, (x, y) => y <= 7),
+      },
+      {
+        body: `<p>Add the <strong>seven-cell hook</strong> below and to the left.</p>
+               <p class="lead">Sitting on its own with nothing near it, doing nothing —
+               until the collision throws debris its way and its shape decides what
+               survives.</p>`,
+        cells: o => absCells("Direction changer", o, (x, y) => x <= 11 && y >= 9 && y <= 12),
+      },
+      {
+        body: `<p>Add the <strong>second hook</strong>, lower down and to the right.</p>
+               <p class="lead">Seven cells again, in a different arrangement. This one
+               sits beside the path the new glider will take on its way out.</p>`,
+        cells: o => absCells("Direction changer", o, (x, y) => y >= 19 && y <= 22),
+      },
+      {
+        body: `<p>Now the <strong>block</strong> — just a 2×2 square in the middle.</p>
+               <p class="lead">The smallest piece in the machine and the most important:
+               this is the one the glider actually hits. Everything else is there to
+               tidy up what the impact throws off.</p>`,
+        cells: o => absCells("Direction changer", o, (x, y) => x >= 17 && y >= 9 && y <= 12),
+      },
+      {
+        body: `<p>Finally, place a <strong>glider</strong> down in the bottom-left
+               corner, aimed up and to the right.</p>
+               <p class="lead">Same five cells you built in the first tutorial. Its lane
+               has to be exactly right — one cell out in any direction and the machine
+               is wrecked instead of triggered.</p>`,
+        cells: o => absCells("Direction changer", o, (x, y) => y >= 30),
+      },
+      {
+        watch: true,
+        body: `<p>Press play and follow the glider up.</p>
+               <p class="lead">It climbs to the block, and for about twenty generations
+               the collision looks like it has destroyed everything. Then the mess
+               resolves: a glider walks away downward and to the right, and all 49 cells
+               of the machine are exactly as you left them — ready for the next one.
+               That's what makes reflectors useful: they can be fired at over and
+               over.</p>`,
+        action: { label: "Play", run: () => setRunning(true) },
+      },
+    ],
+  },
+  {
+    id: "lwssgun",
+    title: "Build a spaceship gun",
+    teaser: "146 cells — a machine that fires a lightweight spaceship every 120 generations.",
+    pattern: "Lightweight spaceship gun",
+    origin: LWSSGUN_AT,
+    steps: [
+      {
+        body: `<p>This is Dean Hickerson's compact <strong>lightweight spaceship
+               gun</strong>: 146 cells that launch a fully-formed LWSS every 120
+               generations, forever.</p>
+               <p class="lead">Guns like this don't build spaceships directly. They fire
+               <em>gliders</em> at each other and let the wreckage of the collision
+               settle into the ship you want. You'll place the two firing assemblies
+               first, then the small oscillator that sits where their output meets.
+               Starting clears the grid.</p>`,
+      },
+      {
+        body: `<p>Place the <strong>left half of the upper assembly</strong>.</p>
+               <p class="lead">On its own this half is inert; the machinery only comes
+               alive once its other half is in place. It sits along the top of the work
+               area — 35 cells in four separate pieces.</p>`,
+        cells: o => absCells("Lightweight spaceship gun", o, (x, y) => y <= 8 && x < 40),
+      },
+      {
+        body: `<p>Complete the <strong>upper assembly</strong> with its right-hand
+               pieces.</p>
+               <p class="lead">That's the top gun finished. By itself it's an ordinary
+               glider gun — it fires gliders diagonally down and to the right, straight
+               at where the collision will happen.</p>`,
+        cells: o => absCells("Lightweight spaceship gun", o, (x, y) => y <= 8 && x >= 40),
+      },
+      {
+        body: `<p>Now the <strong>left half of the lower assembly</strong>, along the
+               bottom of the work area.</p>
+               <p class="lead">Four more pieces, 30 cells. This is the mirror of the job
+               the top gun does, aiming up and to the right instead of down.</p>`,
+        cells: o => absCells("Lightweight spaceship gun", o,
+                             (x, y) => !(y <= 8) && !(x >= 44 && y >= 16 && y <= 21) && x < 40),
+      },
+      {
+        body: `<p>Complete the <strong>lower assembly</strong>.</p>
+               <p class="lead">Both guns are now built and both are running, but nothing
+               useful comes out yet — the streams cross with nothing there to catch
+               them.</p>`,
+        cells: o => absCells("Lightweight spaceship gun", o,
+                             (x, y) => !(y <= 8) && !(x >= 44 && y >= 16 && y <= 21) && x >= 40),
+      },
+      {
+        body: `<p>Finally, place the <strong>sparker</strong> between them — the wide
+               31-cell piece on the right.</p>
+               <p class="lead">This one is just a period-4 oscillator: it flips through
+               four shapes and stays put. Its only job is to be in exactly the right
+               place at exactly the right moment, so the passing collision is nudged
+               into forming a spaceship instead of dying. Get this piece wrong and the
+               whole machine produces junk.</p>`,
+        cells: o => absCells("Lightweight spaceship gun", o,
+                             (x, y) => x >= 44 && y >= 16 && y <= 21),
+      },
+      {
+        watch: true,
+        body: `<p>All 146 cells are in. Press play and give it a moment.</p>
+               <p class="lead">The first spaceship takes a while to appear — the gun has
+               to spin up before the first collision lands. After that one LWSS leaves
+               every 120 generations, in an evenly spaced convoy heading right. Press
+               <kbd>f</kbd> to zoom out and watch them cross the grid; the leaders break
+               up against the far edge while new ones keep coming.</p>`,
+        action: { label: "Play", run: () => setRunning(true) },
+      },
+    ],
+  },
+];
+
+const tut = {
+  active: null,   // the running tutorial, or null
+  i: 0,
+  targets: [],    // cells the current step wants placed
+  all: null,      // Set of cell indices in the finished pattern
+  strays: [],     // live cells in the work area that don't belong
+  bbox: null,
+  done: false,
+};
+
+const tutPanel = document.getElementById("tutorial");
+const tutTitle = document.getElementById("tutTitle");
+const tutStepLabel = document.getElementById("tutStep");
+const tutBody = document.getElementById("tutBody");
+const tutFoot = document.getElementById("tutFoot");
+const tutBack = document.getElementById("tutBack");
+const tutFill = document.getElementById("tutFill");
+const tutNext = document.getElementById("tutNext");
+const tutBtn = document.getElementById("tutBtn");
+
+function openTutorials() {
+  tutPanel.hidden = false;
+  tutBtn.setAttribute("aria-expanded", "true");
+  showTutorialList();
+}
+
+function closeTutorials() {
+  tutPanel.hidden = true;
+  tutBtn.setAttribute("aria-expanded", "false");
+  tut.active = null;
+  tut.targets = [];
+  tut.strays = [];
+  tut.bbox = null;
+}
+
+function showTutorialList() {
+  tut.active = null;
+  tut.targets = [];
+  tut.strays = [];
+  tut.bbox = null;
+  tutTitle.textContent = "Tutorials";
+  tutStepLabel.textContent = "";
+  tutFoot.hidden = true;
+  tutBody.innerHTML =
+    `<p class="lead">Pick one. Each walks you through placing the cells yourself,
+     highlighting what to click next.</p><div class="tutList"></div>`;
+  const list = tutBody.querySelector(".tutList");
+  for (const t of TUTORIALS) {
+    const b = document.createElement("button");
+    b.className = "tutCard";
+    b.innerHTML = `<b></b><span></span>`;
+    b.querySelector("b").textContent = t.title;
+    b.querySelector("span").textContent = t.teaser;
+    b.addEventListener("click", () => startTutorial(t));
+    list.appendChild(b);
+  }
+}
+
+function startTutorial(t) {
+  setRunning(false);
+  clearGrid();
+  tut.active = t;
+  tut.done = false;
+
+  const p = PATTERN_DATA[t.pattern];
+  tut.all = new Set();
+  for (const [x, y] of absCells(t.pattern, t.origin)) tut.all.add(y * W + x);
+  tut.bbox = { x0: t.origin.x, y0: t.origin.y, x1: t.origin.x + p.w - 1, y1: t.origin.y + p.h - 1 };
+
+  gotoStep(0);
+  focusOn(tut.bbox);
+}
+
+function gotoStep(n) {
+  const t = tut.active;
+  tut.i = clamp(n, 0, t.steps.length - 1);
+  const s = t.steps[tut.i];
+  if (!s.watch) setRunning(false);
+  tut.targets = s.cells ? s.cells(t.origin) : [];
+  tutShown.key = null;            // force a re-render
+  renderStep();
+}
+
+/* Live count of what's placed and what shouldn't be there. */
+function tutorialProgress() {
+  let placed = 0;
+  for (const [x, y] of tut.targets) if (cur[y * W + x]) placed++;
+
+  const strays = [];
+  const s = tut.active.steps[tut.i];
+  if (!s.watch) {
+    const b = tut.bbox;
+    for (let y = b.y0 - 1; y <= b.y1 + 1; y++) {
+      for (let x = b.x0 - 1; x <= b.x1 + 1; x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const k = y * W + x;
+        if (cur[k] && !tut.all.has(k)) strays.push(k);
+      }
+    }
+  }
+  tut.strays = strays;
+  return { placed, total: tut.targets.length, strays: strays.length };
+}
+
+const tutShown = { key: null };
+
+/* Redraw the panel only when something it displays actually changed. */
+function refreshTutorial() {
+  if (!tut.active) return;
+  const p = tutorialProgress();
+  const key = `${tut.i}|${p.placed}|${p.total}|${p.strays}|${tut.done}`;
+  if (key === tutShown.key) return;
+  tutShown.key = key;
+  renderStep(p);
+}
+
+function renderStep(p) {
+  const t = tut.active;
+  if (!t) return;
+  if (!p) p = tutorialProgress();
+  const s = t.steps[tut.i];
+  const last = tut.i === t.steps.length - 1;
+  const complete = p.total > 0 && p.placed === p.total;
+
+  tutTitle.textContent = t.title;
+  tutStepLabel.textContent = `${tut.i + 1} / ${t.steps.length}`;
+
+  let html = s.body;
+  if (p.total > 0) {
+    const pct = Math.round((p.placed / p.total) * 100);
+    html += `<div class="progress${complete ? " done" : ""}">
+               <span>${complete ? "✓" : ""} ${p.placed} / ${p.total} cells</span>
+               <span class="bar"><i style="width:${pct}%"></i></span>
+             </div>`;
+  }
+  if (p.strays > 0) {
+    html += `<p class="warn">${p.strays} cell${p.strays === 1 ? "" : "s"} in the way
+             <button id="tutClean">Remove</button></p>`;
+  }
+  tutBody.innerHTML = html;
+
+  const clean = tutBody.querySelector("#tutClean");
+  if (clean) clean.addEventListener("click", () => {
+    for (const k of tut.strays) setCell(k % W, (k / W) | 0, 0);
+  });
+
+  if (s.action) {
+    const b = document.createElement("button");
+    b.textContent = s.action.label;
+    b.addEventListener("click", () => { s.action.run(); b.blur(); });
+    tutBody.appendChild(b);
+  }
+
+  tutFoot.hidden = false;
+  tutBack.disabled = tut.i === 0;
+  tutFill.hidden = p.total === 0;
+  tutFill.disabled = complete;
+  tutNext.textContent = last ? "Finish" : (tut.i === 0 ? "Start" : "Next");
+  // Don't gate progress on the drawing being perfect — just signal when it is.
+  tutNext.classList.toggle("ready", complete || p.total === 0);
+}
+
+tutBtn.addEventListener("click", () => {
+  if (tutPanel.hidden) openTutorials(); else closeTutorials();
+});
+document.getElementById("tutClose").addEventListener("click", closeTutorials);
+tutBack.addEventListener("click", () => gotoStep(tut.i - 1));
+tutNext.addEventListener("click", () => {
+  if (tut.i === tut.active.steps.length - 1) showTutorialList();
+  else gotoStep(tut.i + 1);
+});
+tutFill.addEventListener("click", () => {
+  for (const [x, y] of tut.targets) setCell(x, y, 1);
+});
+
+/* ------------------------------------------------------------------ *
+ * Hint + boot
+ * ------------------------------------------------------------------ */
+
+const hint = document.getElementById("hint");
+const HINT_INTRO = hint.innerHTML;
+const HINT_STAMP =
+  `<kbd>q</kbd> / <kbd>e</kbd> rotate &nbsp;·&nbsp; <kbd>click</kbd> place &nbsp;·&nbsp;
+   <kbd>shift</kbd>+click place several &nbsp;·&nbsp; <kbd>esc</kbd> cancel`;
+let hintTimer = setTimeout(hideHint, 9000);
+let hintDismissed = false;
+
+function hideHint() { clearTimeout(hintTimer); hintDismissed = true; refreshHint(); }
+
+/* The intro hint goes away once you touch anything, but arming a stamp brings
+ * the bar back with the keys that matter in that mode. */
+function refreshHint() {
+  if (armedPattern) {
+    hint.innerHTML = HINT_STAMP;
+    hint.classList.remove("hidden");
+  } else {
+    hint.innerHTML = HINT_INTRO;
+    hint.classList.toggle("hidden", hintDismissed);
+  }
+}
+
+new ResizeObserver(onLayoutChange).observe(document.getElementById("viewWrap"));
+window.addEventListener("resize", onLayoutChange);
+
+fitView();
+// Seed a few classics so there's something alive on first open: a gun that
+// runs forever, an oscillator, and a small pattern that explodes.
+stampPattern("Gosper glider gun", 40, 40);
+stampPattern("Pulsar", 190, 60);
+stampPattern("Acorn", 120, 180);
+recount();
+setRunning(true);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
